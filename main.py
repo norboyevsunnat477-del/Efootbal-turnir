@@ -10,14 +10,14 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 
 BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
 ADMIN_ID = 5244022908  
-CHANNEL_USERNAME = "@EFMOBILEUZ"
+CHANNEL_USERNAME = "@efmobileuz"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- DUMMY WEB SERVER (RENDER PORT CHECK UCHUN) ---
+# --- RENDER UCHUN WEB SERVER ---
 async def handle_health_check(request):
-    return web.Response(text="Bot is running!")
+    return web.Response(text="Bot ishlayapti!")
 
 async def start_web_server():
     app = web.Application()
@@ -28,7 +28,7 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# --- BAZANI SOZLASH ---
+# --- MA'LUMOTLAR BAZASI ---
 def init_db():
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
@@ -47,6 +47,13 @@ def init_db():
         )
     ''')
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS active_chats (
+            user_id INTEGER PRIMARY KEY,
+            opponent_id INTEGER,
+            match_id INTEGER
+        )
+    ''')
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS matches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player1_id INTEGER,
@@ -62,14 +69,33 @@ init_db()
 
 class SubmitResult(StatesGroup):
     waiting_for_photo = State()
-    waiting_for_score = State()
 
 def main_keyboard():
     kb = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🎮 Raqib topish"), KeyboardButton(text="🏆 Leaderboard")],
-        [KeyboardButton(text="📸 Natija yuborish"), KeyboardButton(text="⚽ Liga (Top 16)")]
+        [KeyboardButton(text="⚽ Liga (Top 16)")]
     ], resize_keyboard=True)
     return kb
+
+def match_inline_keyboard(match_id):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Yutdim", callback_data=f"res_win_{match_id}"),
+            InlineKeyboardButton(text="🤝 Durang", callback_data=f"res_draw_{match_id}")
+        ],
+        [
+            InlineKeyboardButton(text="❌ O'yinni bekor qilish", callback_data=f"res_cancel_{match_id}")
+        ]
+    ])
+    return kb
+
+def get_active_opponent(user_id):
+    conn = sqlite3.connect('tournament.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT opponent_id, match_id FROM active_chats WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    return res
 
 async def check_sub(user_id: int) -> bool:
     if not CHANNEL_USERNAME or CHANNEL_USERNAME == "@kanalingiz_username":
@@ -80,6 +106,7 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
+# --- HANDLERS ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     if not await check_sub(message.from_user.id):
@@ -99,9 +126,15 @@ async def cmd_start(message: types.Message):
 
     await message.answer("⚡ **eFootball Turnir Botiga xush kelibsiz!**\n\n1-bosqich (Saralash) ketyapti. Kuniga 5 tagacha raqib topib o'ynashingiz mumkin.", reply_markup=main_keyboard())
 
+# --- RAQIB TOPISH VA CHAT OCHISH ---
 @dp.message(F.text == "🎮 Raqib topish")
 async def find_opponent(message: types.Message):
     user_id = message.from_user.id
+    
+    if get_active_opponent(user_id):
+        await message.answer("⚠️ Sizda hozirda faol o'yin mavjud! Avval o'yinni yakunlang yoki bekor qiling.")
+        return
+
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
     
@@ -120,13 +153,18 @@ async def find_opponent(message: types.Message):
         cursor.execute("DELETE FROM queue WHERE user_id = ?", (opp_id,))
         cursor.execute("INSERT INTO matches (player1_id, player2_id) VALUES (?, ?)", (user_id, opp_id))
         match_id = cursor.lastrowid
+        
+        cursor.execute("INSERT OR REPLACE INTO active_chats (user_id, opponent_id, match_id) VALUES (?, ?, ?)", (user_id, opp_id, match_id))
+        cursor.execute("INSERT OR REPLACE INTO active_chats (user_id, opponent_id, match_id) VALUES (?, ?, ?)", (opp_id, user_id, match_id))
         conn.commit()
 
-        cursor.execute("SELECT username FROM users WHERE user_id = ?", (opp_id,))
-        opp_name = cursor.fetchone()[0]
+        text = (
+            "✅ **Raqib topildi!** Endi u bilan shu chat orqali anonim yozishingiz mumkin.\n"
+            "O'yin tugagach natijani belgilang:"
+        )
         
-        await message.answer(f"🎉 **Raqib topildi!**\n👤 Raqibingiz: @{opp_name}\n\nO'yinni o'ynab, g'olib '📸 Natija yuborish' tugmasi orqali skrinshot yuborsin. O'yin ID: #{match_id}")
-        await bot.send_message(opp_id, f"🎉 **Raqib topildi!**\n👤 Raqibingiz: @{message.from_user.username}\n\nO'yin ID: #{match_id}")
+        await message.answer(text, reply_markup=match_inline_keyboard(match_id))
+        await bot.send_message(opp_id, text, reply_markup=match_inline_keyboard(match_id))
     else:
         cursor.execute("INSERT OR REPLACE INTO queue (user_id) VALUES (?)", (user_id,))
         conn.commit()
@@ -134,77 +172,173 @@ async def find_opponent(message: types.Message):
     
     conn.close()
 
-@dp.message(F.text == "📸 Natija yuborish")
-async def start_submit(message: types.Message, state: FSMContext):
-    await state.set_state(SubmitResult.waiting_for_photo)
-    await message.answer("📸 O'yin natijasi aks etgan skrinshotni yuboring:")
-
-@dp.message(SubmitResult.waiting_for_photo, F.photo)
-async def process_photo(message: types.Message, state: FSMContext):
-    await state.update_data(photo_id=message.photo[-1].file_id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🥇 Men yutdim (+3 ochko)", callback_data="win")],
-        [InlineKeyboardButton(text="🤝 Durrang (+1 ochko)", callback_data="draw")],
-        [InlineKeyboardButton(text="❌ Men yutqizdim (0 ochko)", callback_data="loss")]
-    ])
-    await state.set_state(SubmitResult.waiting_for_score)
-    await message.answer("O'yinda erishgan natijangizni tanlang:", reply_markup=kb)
-
-@dp.callback_query(SubmitResult.waiting_for_score)
-async def process_score(call: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    res = call.data
+# --- BEKOR QILISH SO'ROVI (RAQIBGA SO'ROV YUBORISH) ---
+@dp.callback_query(F.data.startswith("res_cancel_"))
+async def request_cancel_match(call: types.CallbackQuery):
+    match_id = int(call.data.split("_")[2])
+    user_id = call.from_user.id
     
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"app_{call.from_user.id}_{res}"),
-            InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rej_{call.from_user.id}_{res}")
-        ]
-    ])
-    
-    await bot.send_photo(
-        ADMIN_ID, 
-        data['photo_id'], 
-        caption=f"📩 **Natija tekshiruvi:**\nO'yinchi: @{call.from_user.username}\nNatija: {res.upper()}",
-        reply_markup=admin_kb
-    )
-    await call.message.edit_text("⏳ Natijangiz adminga yuborildi. Tekshirilgach ochko qo'shiladi.")
-    await state.clear()
+    active = get_active_opponent(user_id)
+    if active:
+        opp_id, _ = active
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Ha", callback_data=f"confirm_cancel_{match_id}_{user_id}"),
+                InlineKeyboardButton(text="❌ Yo'q", callback_data=f"decline_cancel_{match_id}_{user_id}")
+            ]
+        ])
+        
+        await bot.send_message(
+            opp_id, 
+            "⚠️ **Raqibingiz o'yinni bekor qilishni so'rayapti.**\n\nO'yinni bekor qilishga rozimisiz?",
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+        await call.message.answer("⏳ Raqibingizga bekor qilish so'rovi yuborildi. Javobini kuting...")
+        await call.answer()
+    else:
+        await call.answer("Faol o'yin topilmadi.", show_alert=True)
 
-@dp.callback_query(F.data.startswith("app_"))
-async def approve_match(call: types.CallbackQuery):
-    _, user_id, res = call.data.split("_")
-    user_id = int(user_id)
-    pts = 3 if res == "win" else (1 if res == "draw" else 0)
+# --- BEKOR QILISHNI TASDIQLASH (HA) ---
+@dp.callback_query(F.data.startswith("confirm_cancel_"))
+async def confirm_cancel(call: types.CallbackQuery):
+    parts = call.data.split("_")
+    match_id = int(parts[2])
+    requester_id = int(parts[3])
+    user_id = call.from_user.id
 
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET points = points + ?, daily_games = daily_games + 1 WHERE user_id = ?", (pts, user_id))
+    cursor.execute("DELETE FROM active_chats WHERE user_id IN (?, ?)", (user_id, requester_id))
+    cursor.execute("UPDATE matches SET status = 'CANCELLED' WHERE id = ?", (match_id,))
+    conn.commit()
+    conn.close()
+
+    await call.message.edit_text("❌ O'yinni bekor qilishni tasdiqladingiz. O'yin bekor qilindi.")
+    await bot.send_message(requester_id, "❌ Raqibingiz bekor qilishga rozi bo'ldi. O'yin bekor qilindi.")
+
+# --- BEKOR QILISHNI RAD ETISH (YO'Q) ---
+@dp.callback_query(F.data.startswith("decline_cancel_"))
+async def decline_cancel(call: types.CallbackQuery):
+    parts = call.data.split("_")
+    requester_id = int(parts[3])
+
+    await call.message.edit_text("❌ Siz bekor qilish so'rovini rad etdingiz. O'yin davom etadi.")
+    await bot.send_message(requester_id, "⚠️ Raqibingiz o'yinni bekor qilishni rad etdi! O'yinni davom ettiring va natijani kiriting.")
+
+# --- NATIJA TANLASH VA SKRINSHOT SO'RASH ---
+@dp.callback_query(F.data.startswith("res_win_") | F.data.startswith("res_draw_"))
+async def request_screenshot(call: types.CallbackQuery, state: FSMContext):
+    parts = call.data.split("_")
+    outcome = parts[1]
+    match_id = int(parts[2])
+    
+    await state.set_state(SubmitResult.waiting_for_photo)
+    await state.update_data(outcome=outcome, match_id=match_id)
+    
+    text = (
+        "📸 **Iltimos, o'yin natijasini tasdiqlaydigan skrinshot yuboring.**\n\n"
+        "⚠️ **Faqat quyidagi rasmdagidek (Match History / O'yin tarixi) skrinshot tashlang — boshqacha turdagi rasm hisobga olinmaydi!**"
+    )
+    await call.message.answer(text, parse_mode="Markdown")
+    await call.answer()
+
+# --- SKRINSHOTNI QABUL QILISH VA ADMINGA YUBORISH ---
+@dp.message(SubmitResult.waiting_for_photo, F.photo)
+async def process_screenshot(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    outcome = data.get('outcome')
+    match_id = data.get('match_id')
+    photo_id = message.photo[-1].file_id
+    user_id = message.from_user.id
+
+    pts = 3 if outcome == "win" else 1
+
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"app_{user_id}_{pts}_{match_id}"),
+            InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rej_{user_id}_{pts}_{match_id}")
+        ]
+    ])
+
+    await bot.send_photo(
+        ADMIN_ID,
+        photo_id,
+        caption=f"📩 **Natija Tekshiruvi (O'yin #{match_id}):**\n👤 O'yinchi: @{message.from_user.username or user_id}\n📊 Natija: {outcome.upper()} ({pts} ochko)",
+        reply_markup=admin_kb,
+        parse_mode="Markdown"
+    )
+
+    active = get_active_opponent(user_id)
+    if active:
+        opp_id, _ = active
+        conn = sqlite3.connect('tournament.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM active_chats WHERE user_id IN (?, ?)", (user_id, opp_id))
+        conn.commit()
+        conn.close()
+
+        await bot.send_message(opp_id, "📸 Raqibingiz natija skrinshotini yubordi. Chat yopildi, admin tekshiruvi kutilmoqda.")
+
+    await message.answer("⏳ Skrinshot adminga yuborildi. Tekshirilgandan so'ng ochko qo'shiladi.")
+    await state.clear()
+
+# --- ANONIM CHAT YOZISHISH TIZIMI ---
+@dp.message(~F.text.in_(["🎮 Raqib topish", "🏆 Leaderboard", "⚽ Liga (Top 16)"]))
+async def chat_relay(message: types.Message):
+    user_id = message.from_user.id
+    active = get_active_opponent(user_id)
+
+    if active:
+        opp_id, _ = active
+        if message.text:
+            await bot.send_message(opp_id, f"💬 Raqib: {message.text}")
+        elif message.photo:
+            caption = f"💬 Raqib: {message.caption}" if message.caption else "💬 Raqib [Rasm]"
+            await bot.send_photo(opp_id, message.photo[-1].file_id, caption=caption)
+        elif message.sticker:
+            await bot.send_message(opp_id, "💬 Raqib stiker yubordi:")
+            await bot.send_sticker(opp_id, message.sticker.file_id)
+        elif message.voice:
+            await bot.send_voice(opp_id, message.voice.file_id, caption="💬 Raqib ovozli xabar yubordi")
+
+# --- ADMIN QARORI (TASDIQ / ATKAZ) ---
+@dp.callback_query(F.data.startswith("app_"))
+async def approve_match(call: types.CallbackQuery):
+    parts = call.data.split("_")
+    u_id, pts, match_id = int(parts[1]), int(parts[2]), int(parts[3])
+
+    conn = sqlite3.connect('tournament.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET points = points + ?, daily_games = daily_games + 1 WHERE user_id = ?", (pts, u_id))
+    cursor.execute("UPDATE matches SET status = 'APPROVED', result = ? WHERE id = ?", (f"{pts} pts", match_id))
     conn.commit()
     conn.close()
 
     revert_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚠️ Noto'g'ri hisob (Ochkoni olib tashlash)", callback_data=f"rej_{user_id}_{res}")]
+        [InlineKeyboardButton(text="⚠️ Noto'g'ri hisob (Ochkoni ayirish)", callback_data=f"rej_{u_id}_{pts}_{match_id}")]
     ])
 
     await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ **Tasdiqlandi (+{pts} ochko berildi)**", reply_markup=revert_kb)
-    await bot.send_message(user_id, f"🎉 Arizangiz tasdiqlandi! Hisobingizga +{pts} ochko qo'shildi.")
+    await bot.send_message(u_id, f"🎉 Arizangiz tasdiqlandi! Hisobingizga +{pts} ochko qo'shildi.")
 
 @dp.callback_query(F.data.startswith("rej_"))
 async def reject_match(call: types.CallbackQuery):
-    _, user_id, res = call.data.split("_")
-    user_id = int(user_id)
-    pts = 3 if res == "win" else (1 if res == "draw" else 0)
+    parts = call.data.split("_")
+    u_id, pts, match_id = int(parts[1]), int(parts[2]), int(parts[3])
 
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET points = MAX(0, points - ?), daily_games = MAX(0, daily_games - 1) WHERE user_id = ?", (pts, user_id))
+    cursor.execute("UPDATE users SET points = MAX(0, points - ?), daily_games = MAX(0, daily_games - 1) WHERE user_id = ?", (pts, u_id))
+    cursor.execute("UPDATE matches SET status = 'REJECTED' WHERE id = ?", (match_id,))
     conn.commit()
     conn.close()
 
-    await call.message.edit_caption(caption=call.message.caption + "\n\n❌ **RAD ETILDI (Ochko olib tashlandi)**", reply_markup=None)
-    await bot.send_message(user_id, "⚠️ Natijangiz rad etildi va berilgan ochkolar olib tashlandi.")
+    await call.message.edit_caption(caption=call.message.caption + "\n\n❌ **RAD ETILDI (Ochko ayirib tashlandi)**", reply_markup=None)
+    await bot.send_message(u_id, "⚠️ Natijangiz rad etildi va berilgan ochkolar olib tashlandi.")
 
+# --- LEADERBOARD VA LIGA ---
 @dp.message(F.text == "🏆 Leaderboard")
 async def show_leaderboard(message: types.Message):
     conn = sqlite3.connect('tournament.db')
@@ -228,7 +362,7 @@ async def show_league(message: types.Message):
     conn.close()
 
     if not league_users:
-        await message.answer("⚽ **2-Bosqich: Liga** hali boshlanmadi.\n\nSaralash bosqichining 7-kuni yakunlangach, Top 16 o'yinchi bu yerga qo'shiladi. Mukofot: **50 000 so'm** (8 kun, kuniga 2 tadan tur).")
+        await message.answer("⚽ **2-Bosqich: Liga** hali boshlanmadi.\n\nSaralash bosqichining 7-kuni yakunlangach, Top 16 o'yinchi bu yerga qo'shiladi.")
     else:
         text = "🔥 **50 000 SO'MLIK LIGA JADVALI** 🔥\n\n"
         for idx, (username, points) in enumerate(league_users, start=1):
