@@ -1,6 +1,8 @@
 import asyncio
 import sqlite3
 import os
+import html
+from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command, StateFilter
@@ -38,6 +40,7 @@ def init_db():
             username TEXT,
             points INTEGER DEFAULT 0,
             daily_games INTEGER DEFAULT 0,
+            last_play_date TEXT DEFAULT '',
             in_league INTEGER DEFAULT 0,
             wins INTEGER DEFAULT 0,
             draws INTEGER DEFAULT 0,
@@ -45,13 +48,14 @@ def init_db():
         )
     ''')
     
-    # Ustunlar mavjudligini tekshirish (Bazani yangilash)
     cursor.execute("PRAGMA table_info(users)")
     columns = [column[1] for column in cursor.fetchall()]
     if 'wins' not in columns:
         cursor.execute("ALTER TABLE users ADD COLUMN wins INTEGER DEFAULT 0")
         cursor.execute("ALTER TABLE users ADD COLUMN draws INTEGER DEFAULT 0")
         cursor.execute("ALTER TABLE users ADD COLUMN losses INTEGER DEFAULT 0")
+    if 'last_play_date' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN last_play_date TEXT DEFAULT ''")
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS queue (
@@ -78,6 +82,17 @@ def init_db():
     conn.close()
 
 init_db()
+
+# --- FOYDALANUVCHINI BAZAGA AVTOMATIK QO'SHISH ---
+def ensure_user_exists(user_id: int, username: str):
+    conn = sqlite3.connect('tournament.db')
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO users (user_id, username) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET username=excluded.username",
+        (user_id, username or "O'yinchi")
+    )
+    conn.commit()
+    conn.close()
 
 class SubmitResult(StatesGroup):
     waiting_for_photo = State()
@@ -122,6 +137,8 @@ async def check_sub(user_id: int) -> bool:
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
+    ensure_user_exists(message.from_user.id, message.from_user.username)
+    
     if not await check_sub(message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")],
@@ -130,20 +147,17 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Botdan foydalanish uchun kanalimizga a'zo bo'ling:", reply_markup=kb)
         return
 
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)", 
-                   (message.from_user.id, message.from_user.username or "O'yinchi"))
-    conn.commit()
-    conn.close()
+    await message.answer("⚡ <b>eFootball Turnir Botiga xush kelibsiz!</b>\n\n1-bosqich (Saralash) ketyapti. Kuniga 5 tagacha raqib topib o'ynashingiz mumkin.", reply_markup=main_keyboard(), parse_mode="HTML")
 
-    await message.answer("⚡ **eFootball Turnir Botiga xush kelibsiz!**\n\n1-bosqich (Saralash) ketyapti. Kuniga 5 tagacha raqib topib o'ynashingiz mumkin.", reply_markup=main_keyboard())
-
-# --- RAQIB TOPISH VA CHAT OCHISH ---
+# --- RAQIB TOPISH ---
 @dp.message(F.text == "🎮 Raqib topish")
 async def find_opponent(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
+    username = message.from_user.username
+    ensure_user_exists(user_id, username)
+    
+    today_str = datetime.now().strftime("%Y-%m-%d")
     
     if get_active_opponent(user_id):
         await message.answer("⚠️ Sizda hozirda faol o'yin mavjud! Avval o'yinni yakunlang yoki bekor qiling.")
@@ -152,10 +166,21 @@ async def find_opponent(message: types.Message, state: FSMContext):
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
     
-    cursor.execute("SELECT daily_games FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    if user and user[0] >= 5:
-        await message.answer("⛔ Bugungi 5 ta o'yin limitidan foydalanib bo'ldingiz! Ertaga yana urinib ko'ring.")
+    cursor.execute("SELECT daily_games, last_play_date FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    
+    daily_games = 0
+    if row:
+        d_games, l_date = row[0] or 0, row[1] or ""
+        if l_date != today_str:
+            cursor.execute("UPDATE users SET daily_games = 0, last_play_date = ? WHERE user_id = ?", (today_str, user_id))
+            conn.commit()
+            daily_games = 0
+        else:
+            daily_games = d_games
+
+    if daily_games >= 5:
+        await message.answer("⛔ <b>Bugungi 5 ta o'yin limitidan foydalanib bo'ldingiz!</b> Ertaga yana urinib ko'ring.", parse_mode="HTML")
         conn.close()
         return
 
@@ -171,20 +196,39 @@ async def find_opponent(message: types.Message, state: FSMContext):
         cursor.execute("INSERT OR REPLACE INTO active_chats (user_id, opponent_id, match_id) VALUES (?, ?, ?)", (user_id, opp_id, match_id))
         cursor.execute("INSERT OR REPLACE INTO active_chats (user_id, opponent_id, match_id) VALUES (?, ?, ?)", (opp_id, user_id, match_id))
         conn.commit()
+        conn.close()
 
         text = (
-            "✅ **Raqib topildi!** Endi u bilan shu chat orqali anonim yozishingiz mumkin.\n"
+            "✅ <b>Raqib topildi!</b> Endi u bilan shu chat orqali anonim yozishingiz mumkin.\n"
             "O'yin tugagach natijani belgilang:"
         )
         
-        await message.answer(text, reply_markup=match_inline_keyboard(match_id))
-        await bot.send_message(opp_id, text, reply_markup=match_inline_keyboard(match_id))
+        await message.answer(text, reply_markup=match_inline_keyboard(match_id), parse_mode="HTML")
+        await bot.send_message(opp_id, text, reply_markup=match_inline_keyboard(match_id), parse_mode="HTML")
     else:
         cursor.execute("INSERT OR REPLACE INTO queue (user_id) VALUES (?)", (user_id,))
         conn.commit()
-        await message.answer("🔍 Raqib izlanmoqda... Boshqa o'yinchi 'Raqib topish'ni bossa, bot sizlarni biriktiradi.")
-    
-    conn.close()
+        conn.close()
+        
+        search_msg = await message.answer("🔍 <b>Raqib izlanmoqda...</b>\n⏱️ (1 daqiqa ichida raqib topilmasa izlash bekor qilinadi)", parse_mode="HTML")
+        
+        await asyncio.sleep(60)
+        
+        conn2 = sqlite3.connect('tournament.db')
+        cursor2 = conn2.cursor()
+        cursor2.execute("SELECT user_id FROM queue WHERE user_id = ?", (user_id,))
+        in_queue = cursor2.fetchone()
+        
+        if in_queue:
+            cursor2.execute("DELETE FROM queue WHERE user_id = ?", (user_id,))
+            conn2.commit()
+            conn2.close()
+            try:
+                await search_msg.edit_text("⏱️ <b>1 daqiqa ichida raqib topilmadi.</b> Izlash bekor qilindi (kunlik limit kamaymadi).", parse_mode="HTML")
+            except Exception:
+                await message.answer("⏱️ <b>1 daqiqa ichida raqib topilmadi.</b> Izlash bekor qilindi (kunlik limit kamaymadi).", parse_mode="HTML")
+        else:
+            conn2.close()
 
 # --- BEKOR QILISH SO'ROVI ---
 @dp.callback_query(F.data.startswith("res_cancel_"))
@@ -204,9 +248,9 @@ async def request_cancel_match(call: types.CallbackQuery):
         
         await bot.send_message(
             opp_id, 
-            "⚠️ **Raqibingiz o'yinni bekor qilishni so'rayapti.**\n\nO'yinni bekor qilishga rozimisiz?",
+            "⚠️ <b>Raqibingiz o'yinni bekor qilishni so'rayapti.</b>\n\nO'yinni bekor qilishga rozimisiz?",
             reply_markup=kb,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         await call.message.answer("⏳ Raqibingizga bekor qilish so'rovi yuborildi. Javobini kuting...")
         await call.answer()
@@ -249,13 +293,13 @@ async def request_screenshot(call: types.CallbackQuery, state: FSMContext):
     await state.update_data(outcome=outcome, match_id=match_id)
     
     text = (
-        "📸 **Iltimos, o'yin natijasini tasdiqlaydigan skrinshot yuboring.**\n\n"
-        "⚠️ **Faqat (Match History / O'yin tarixi) skrinshotini tashlang!**"
+        "📸 <b>Iltimos, o'yin natijasini tasdiqlaydigan skrinshot yuboring.</b>\n\n"
+        "⚠️ <b>Faqat (Match History / O'yin tarixi) skrinshotini tashlang!</b>"
     )
-    await call.message.answer(text, parse_mode="Markdown")
+    await call.message.answer(text, parse_mode="HTML")
     await call.answer()
 
-# --- SKRINSHOTNI ADMINGA YUBORISH ---
+# --- SKRINSHOTNI ODDIY FOYDALANUVCHILARDAN ADMINGA YUBORISH ---
 @dp.message(SubmitResult.waiting_for_photo, F.photo)
 async def process_screenshot(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -264,6 +308,7 @@ async def process_screenshot(message: types.Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     user_id = message.from_user.id
 
+    ensure_user_exists(user_id, message.from_user.username)
     pts = 3 if outcome == "win" else 1
 
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -273,13 +318,18 @@ async def process_screenshot(message: types.Message, state: FSMContext):
         ]
     ])
 
-    await bot.send_photo(
-        ADMIN_ID,
-        photo_id,
-        caption=f"📩 **Natija Tekshiruvi (O'yin #{match_id}):**\n👤 O'yinchi: @{message.from_user.username or user_id}\n📊 Natija: {outcome.upper()} ({pts} ochko)",
-        reply_markup=admin_kb,
-        parse_mode="Markdown"
-    )
+    user_name_safe = html.escape(message.from_user.username or str(user_id))
+
+    try:
+        await bot.send_photo(
+            ADMIN_ID,
+            photo_id,
+            caption=f"📩 <b>Natija Tekshiruvi (O'yin #{match_id}):</b>\n👤 O'yinchi: @{user_name_safe}\n📊 Natija: {outcome.upper()} ({pts} ochko)",
+            reply_markup=admin_kb,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Admin'ga xabar yuborishda xatolik: {e}")
 
     active = get_active_opponent(user_id)
     if active:
@@ -314,7 +364,7 @@ async def chat_relay(message: types.Message):
         elif message.voice:
             await bot.send_voice(opp_id, message.voice.file_id, caption="💬 Raqib ovozli xabar yubordi")
 
-# --- ADMIN TASDIQLASH VA PROFILNI YANGILASH ---
+# --- ADMIN TASDIQLASH ---
 @dp.callback_query(F.data.startswith("app_"))
 async def approve_match(call: types.CallbackQuery):
     parts = call.data.split("_")
@@ -323,7 +373,6 @@ async def approve_match(call: types.CallbackQuery):
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
     
-    # G'alaba yoki Durrang statistikasini qo'shish
     if pts == 3:
         cursor.execute("UPDATE users SET points = points + 3, wins = wins + 1, daily_games = daily_games + 1 WHERE user_id = ?", (u_id,))
     elif pts == 1:
@@ -337,7 +386,7 @@ async def approve_match(call: types.CallbackQuery):
         [InlineKeyboardButton(text="⚠️ Noto'g'ri hisob (Ochkoni ayirish)", callback_data=f"rej_{u_id}_{pts}_{match_id}")]
     ])
 
-    await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ **Tasdiqlandi (+{pts} ochko berildi)**", reply_markup=revert_kb)
+    await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ <b>Tasdiqlandi (+{pts} ochko berildi)</b>", reply_markup=revert_kb, parse_mode="HTML")
     await bot.send_message(u_id, f"🎉 Arizangiz tasdiqlandi! Hisobingizga +{pts} ochko qo'shildi.")
 
 @dp.callback_query(F.data.startswith("rej_"))
@@ -357,10 +406,10 @@ async def reject_match(call: types.CallbackQuery):
     conn.commit()
     conn.close()
 
-    await call.message.edit_caption(caption=call.message.caption + "\n\n❌ **RAD ETILDI (Ochko ayirib tashlandi)**", reply_markup=None)
+    await call.message.edit_caption(caption=call.message.caption + "\n\n❌ <b>RAD ETILDI (Ochko ayirib tashlandi)</b>", reply_markup=None, parse_mode="HTML")
     await bot.send_message(u_id, "⚠️ Natijangiz rad etildi va berilgan ochkolar olib tashlandi.")
 
-# --- LEADERBOARD (ISHLAYDIGAN QILINDI) ---
+# --- LEADERBOARD (TUZATILDI) ---
 @dp.message(F.text == "🏆 Leaderboard")
 async def show_leaderboard(message: types.Message, state: FSMContext):
     await state.clear()
@@ -370,27 +419,28 @@ async def show_leaderboard(message: types.Message, state: FSMContext):
     users = cursor.fetchall()
     conn.close()
 
-    text = "🏆 **SARALASH BOSQICHI — TOP 16**\n*(7-kun yakunida ushbu 16 kishi Ligaga o'tadi)*\n\n"
+    text = "🏆 <b>SARALASH BOSQICHI — TOP 16</b>\n<i>(7-kun yakunida ushbu 16 kishi Ligaga o'tadi)</i>\n\n"
     if not users:
         text += "Hozircha o'yinchilar yo'q."
     else:
         for idx, (username, points) in enumerate(users, start=1):
-            text += f"{idx}. @{username} — **{points}** ochko\n"
+            safe_name = html.escape(username or "O'yinchi")
+            text += f"{idx}. @{safe_name} — <b>{points}</b> ochko\n"
     
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode="HTML")
 
-# --- MENING NATIJALARIM (RASMDAGIDEK PROFIL) ---
+# --- MENING NATIJALARIM ---
 @dp.message(F.text == "📊 Mening natijalarim")
 async def show_my_stats(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
+    ensure_user_exists(user_id, message.from_user.username)
     
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
     cursor.execute("SELECT points, wins, draws, losses FROM users WHERE user_id = ?", (user_id,))
     user_data = cursor.fetchone()
     
-    # Tarixni olish
     cursor.execute("SELECT result FROM matches WHERE (player1_id = ? OR player2_id = ?) AND status = 'APPROVED' ORDER BY id DESC LIMIT 5", (user_id, user_id))
     recent_matches = cursor.fetchall()
     conn.close()
@@ -417,20 +467,20 @@ async def show_my_stats(message: types.Message, state: FSMContext):
                 history_text += "🔴-yutqazdi\n"
 
     profile_text = (
-        f"🏆 **Division 10**\n"
-        f"💰 **Achko:** {points}\n\n"
+        f"🏆 <b>Division 10</b>\n"
+        f"💰 <b>Achko:</b> {points}\n\n"
         f"─────────────────\n\n"
-        f"📈 **Record**\n"
-        f"🟢 **Wins**   » {wins}\n"
-        f"🟡 **Draws**  » {draws}\n"
-        f"🔴 **Losses** » {losses}\n\n"
-        f"🎯 **Win Rate:** {win_rate}%\n\n"
+        f"📈 <b>Record</b>\n"
+        f"🟢 <b>Wins</b>   » {wins}\n"
+        f"🟡 <b>Draws</b>  » {draws}\n"
+        f"🔴 <b>Losses</b> » {losses}\n\n"
+        f"🎯 <b>Win Rate:</b> {win_rate}%\n\n"
         f"─────────────────\n\n"
-        f"📋 **Match History**\n\n"
+        f"📋 <b>Match History</b>\n\n"
         f"{history_text}\n"
     )
 
-    await message.answer(profile_text, parse_mode="Markdown")
+    await message.answer(profile_text, parse_mode="HTML")
 
 # --- LIGA ---
 @dp.message(F.text == "⚽ Liga (Top 16)")
@@ -443,17 +493,8 @@ async def show_league(message: types.Message, state: FSMContext):
     conn.close()
 
     if not league_users:
-        await message.answer("⚽ **2-Bosqich: Liga** hali boshlanmadi.\n\nSaralash bosqichining 7-kuni yakunlangach, Top 16 o'yinchi bu yerga qo'shiladi.")
+        await message.answer("⚽ <b>2-Bosqich: Liga</b> hali boshlanmadi.\n\nSaralash bosqichining 7-kuni yakunlangach, Top 16 o'yinchi bu yerga qo'shiladi.", parse_mode="HTML")
     else:
-        text = "🔥 **50 000 SO'MLIK LIGA JADVALI** 🔥\n\n"
+        text = "🔥 <b>50 000 SO'MLIK LIGA JADVALI</b> 🔥\n\n"
         for idx, (username, points) in enumerate(league_users, start=1):
-            text += f"{idx}. @{username} — {points} ochko\n"
-        await message.answer(text)
-
-async def main():
-    await start_web_server()
-    await dp.start_polling(bot)
-
-if __name__ == '__main__':
-    asyncio.run(main())
-    
+            
