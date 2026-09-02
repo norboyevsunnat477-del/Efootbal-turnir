@@ -10,9 +10,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
-BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
-ADMIN_ID = 5244022908  
-CHANNEL_USERNAME = "@EFMOBILEUZ"
+BOT_TOKEN = "BOT_TOKENINI_SHUYERGA_YOZING"
+ADMIN_ID = 123456789  
+CHANNEL_USERNAME = "@kanalingiz_username"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -409,7 +409,7 @@ async def reject_match(call: types.CallbackQuery):
     await call.message.edit_caption(caption=call.message.caption + "\n\n❌ <b>RAD ETILDI (Ochko ayirib tashlandi)</b>", reply_markup=None, parse_mode="HTML")
     await bot.send_message(u_id, "⚠️ Natijangiz rad etildi va berilgan ochkolar olib tashlandi.")
 
-# --- LEADERBOARD (TUZATILDI) ---
+# --- LEADERBOARD ---
 @dp.message(F.text == "🏆 Leaderboard")
 async def show_leaderboard(message: types.Message, state: FSMContext):
     await state.clear()
@@ -497,4 +497,13 @@ async def show_league(message: types.Message, state: FSMContext):
     else:
         text = "🔥 <b>50 000 SO'MLIK LIGA JADVALI</b> 🔥\n\n"
         for idx, (username, points) in enumerate(league_users, start=1):
-            
+            safe_name = html.escape(username or "O'yinchi")
+            text += f"{idx}. @{safe_name} — {points} ochko\n"
+        await message.answer(text, parse_mode="HTML")
+
+async def main():
+    await start_web_server()
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    asyncio.run(main())
