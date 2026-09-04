@@ -24,6 +24,34 @@ RENDER_APP_URL = "https://efootbal-turnir.onrender.com"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+from aiogram import BaseMiddleware
+
+class SubscriptionMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if user:
+            # Agar foydalanuvchi 'Tekshirish' tugmasini bosgan bo'lsa, o'tkazib yuboriladi
+            if isinstance(event, types.CallbackQuery) and event.data == "check_sub":
+                return await handler(event, data)
+            
+            # Obuna tekshiruvidan o'tmagan bo'lsa bloklanadi
+            if not await check_sub(user.id):
+                if isinstance(event, types.Message):
+                    await event.answer(
+                        "⚠️ **Botdan foydalanish uchun quyidagi kanallarga a'zo bo'ling!**\n\n"
+                        "Kanalni tark etgan bo'lsangiz, qayta obuna bo'lmaguningizcha tugmalar ishlamaydi.",
+                        reply_markup=get_sub_keyboard(),
+                        parse_mode="Markdown"
+                    )
+                elif isinstance(event, types.CallbackQuery):
+                    await event.answer("⛔ Avval barcha kanallarga a'zo bo'ling!", show_alert=True)
+                return
+        return await handler(event, data)
+
+# Middleware'ni botga ulash
+dp.message.outer_middleware(SubscriptionMiddleware())
+dp.callback_query.outer_middleware(SubscriptionMiddleware())
+
 # --- MINI APP HTML INTERFEYSI ---
 LEAGUE_HTML = """
 <!DOCTYPE html>
