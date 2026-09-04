@@ -12,9 +12,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 
 # ================= SOZLAMALAR =================
-BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
-ADMIN_ID = 5244022908  
-CHANNEL_USERNAME = "@efmobileuz"
+BOT_TOKEN = "BOT_TOKENINI_SHUYERGA_YOZING"
+ADMIN_ID = 123456789  
+CHANNEL_USERNAME = "@kanalingiz_username"
 RENDER_APP_URL = "https://efootbal-turnir.onrender.com"
 # ===============================================
 
@@ -148,7 +148,7 @@ LEAGUE_HTML = """
                             html += '</div>';
                         }
                     }
-                    fixBody.innerHTML = html || '<div class="card" style="text-align:center;">Hali turlar o\'yinlari yo\'q.</div>';
+                    fixBody.innerHTML = html || '<div class="card" style="text-align:center;">Hali turlar o`yinlari yo`q.</div>';
                 }
             } catch(e) {
                 console.error(e);
@@ -476,347 +476,6 @@ async def decline_cancel(call: types.CallbackQuery):
     requester_id = int(parts[3])
 
     await call.message.edit_text("❌ Siz bekor qilish so'rovini rad etdingiz. O'yin davom etadi.")
-    await bot.send_message(requester_id, "⚠️ Raqibingiz o'yinni bekor qilishni rad etdi! O'yinni davom ettiring va natijani kiriting                // Table
-                const tbody = document.getElementById('standings-body');
-                if(!data.standings || data.standings.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Liga hali boshlanmadi. Top 16 kutilmoqda.</td></tr>';
-                } else {
-                    tbody.innerHTML = data.standings.map((p, i) => {
-                        let rankClass = i === 0 ? 'top-1' : (i === 1 ? 'top-2' : (i === 2 ? 'top-3' : ''));
-                        return `<tr>
-                            <td class="rank ${rankClass}">${i+1}</td>
-                            <td>@${p.username}</td>
-                            <td>${p.wins + p.draws + p.losses}</td>
-                            <td>${p.wins}/${p.draws}/${p.losses}</td>
-                            <td class="points">${p.points}</td>
-                        </tr>`;
-                    }).join('');
-                }
-
-                // Fixtures
-                const fixBody = document.getElementById('fixtures-body');
-                if(!data.fixtures || data.fixtures.length === 0) {
-                    fixBody.innerHTML = '<div class="card" style="text-align:center;">Turlar jadvali hali tuzilmadi.</div>';
-                } else {
-                    let html = '';
-                    for(let r = 1; r <= 16; r++) {
-                        let matches = data.fixtures.filter(m => m.round === r);
-                        if(matches.length > 0) {
-                            html += `<div class="card"><div class="round-title">⚽ ${r}-Tur</div>`;
-                            matches.forEach(m => {
-                                html += `<div class="match-row">
-                                    <span class="player">@${m.p1}</span>
-                                    <span class="score">${m.score}</span>
-                                    <span class="player" style="text-align:right;">@${m.p2}</span>
-                                </div>`;
-                            });
-                            html += '</div>';
-                        }
-                    }
-                    fixBody.innerHTML = html || '<div class="card" style="text-align:center;">Hali turlar o'yinlari yo'q.</div>';
-                }
-            } catch(e) {
-                console.error(e);
-            }
-        }
-
-        loadData();
-    </script>
-</body>
-</html>
-"""
-
-# --- WEB SERVER & API ENDPOINTS ---
-async def handle_health_check(request):
-    return web.Response(text="Bot va Mini App ishlayapti!")
-
-async def handle_league_app(request):
-    return web.Response(text=LEAGUE_HTML, content_type='text/html')
-
-async def handle_league_api(request):
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    
-    # Standings
-    cursor.execute("SELECT username, points, wins, draws, losses FROM users WHERE in_league = 1 ORDER BY points DESC, wins DESC")
-    users = cursor.fetchall()
-    standings = [{"username": u[0], "points": u[1], "wins": u[2], "draws": u[3], "losses": u[4]} for u in users]
-
-    # Fixtures
-    cursor.execute("""
-        SELECT round_num, u1.username, u2.username, score_text 
-        FROM league_fixtures lf
-        LEFT JOIN users u1 ON lf.player1_id = u1.user_id
-        LEFT JOIN users u2 ON lf.player2_id = u2.user_id
-        ORDER BY round_num ASC
-    """)
-    fixtures_data = cursor.fetchall()
-    conn.close()
-
-    fixtures = [{"round": f[0], "p1": f[1] or "O'yinchi1", "p2": f[2] or "O'yinchi2", "score": f[3] or "vs"} for f in fixtures_data]
-
-    return web.json_response({"standings": standings, "fixtures": fixtures})
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle_health_check)
-    app.router.add_get('/liga', handle_league_app)
-    app.router.add_get('/api/league', handle_league_api)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-# --- MA'LUMOTLAR BAZASI ---
-def init_db():
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            points INTEGER DEFAULT 0,
-            daily_games INTEGER DEFAULT 0,
-            last_play_date TEXT DEFAULT '',
-            in_league INTEGER DEFAULT 0,
-            wins INTEGER DEFAULT 0,
-            draws INTEGER DEFAULT 0,
-            losses INTEGER DEFAULT 0
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS queue (
-            user_id INTEGER PRIMARY KEY
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS active_chats (
-            user_id INTEGER PRIMARY KEY,
-            opponent_id INTEGER,
-            match_id INTEGER
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS matches (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            player1_id INTEGER,
-            player2_id INTEGER,
-            result TEXT,
-            status TEXT DEFAULT 'PENDING'
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS league_fixtures (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_num INTEGER,
-            player1_id INTEGER,
-            player2_id INTEGER,
-            score_text TEXT DEFAULT 'vs',
-            status TEXT DEFAULT 'PENDING'
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def ensure_user_exists(user_id: int, username: str):
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO users (user_id, username) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET username=excluded.username",
-        (user_id, username or "O'yinchi")
-    )
-    conn.commit()
-    conn.close()
-
-class SubmitResult(StatesGroup):
-    waiting_for_photo = State()
-
-def main_keyboard():
-    kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🎮 Raqib topish"), KeyboardButton(text="🏆 Leaderboard")],
-        [KeyboardButton(text="📊 Mening natijalarim"), KeyboardButton(text="⚽ Liga (Top 16)")]
-    ], resize_keyboard=True)
-    return kb
-
-def match_inline_keyboard(match_id):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Yutdim", callback_data=f"res_win_{match_id}"),
-            InlineKeyboardButton(text="🤝 Durang", callback_data=f"res_draw_{match_id}")
-        ],
-        [
-            InlineKeyboardButton(text="❌ O'yinni bekor qilish", callback_data=f"res_cancel_{match_id}")
-        ]
-    ])
-    return kb
-
-def get_active_opponent(user_id):
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT opponent_id, match_id FROM active_chats WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    return res
-
-async def check_sub(user_id: int) -> bool:
-    if not CHANNEL_USERNAME or CHANNEL_USERNAME == "@kanalingiz_username":
-        return True
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status in ['creator', 'administrator', 'member']
-    except Exception:
-        return False
-
-# --- HANDLERS ---
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    ensure_user_exists(message.from_user.id, message.from_user.username)
-    
-    if not await check_sub(message.from_user.id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")],
-            [InlineKeyboardButton(text="🔄 Tekshirish", callback_data="check_sub")]
-        ])
-        await message.answer("⚠️ Botdan foydalanish uchun kanalimizga a'zo bo'ling:", reply_markup=kb)
-        return
-
-    await message.answer("⚡ <b>eFootball Turnir Botiga xush kelibsiz!</b>\n\n1-bosqich (Saralash) ketyapti. Kuniga 5 tagacha raqib topib o'ynashingiz mumkin.", reply_markup=main_keyboard(), parse_mode="HTML")
-
-# --- RAQIB TOPISH ---
-@dp.message(F.text == "🎮 Raqib topish")
-async def find_opponent(message: types.Message, state: FSMContext):
-    await state.clear()
-    user_id = message.from_user.id
-    username = message.from_user.username
-    ensure_user_exists(user_id, username)
-    
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    
-    if get_active_opponent(user_id):
-        await message.answer("⚠️ Sizda hozirda faol o'yin mavjud! Avval o'yinni yakunlang yoki bekor qiling.")
-        return
-
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT daily_games, last_play_date FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    
-    daily_games = 0
-    if row:
-        d_games, l_date = row[0] or 0, row[1] or ""
-        if l_date != today_str:
-            cursor.execute("UPDATE users SET daily_games = 0, last_play_date = ? WHERE user_id = ?", (today_str, user_id))
-            conn.commit()
-            daily_games = 0
-        else:
-            daily_games = d_games
-
-    if daily_games >= 5:
-        await message.answer("⛔ <b>Bugungi 5 ta o'yin limitidan foydalanib bo'ldingiz!</b> Ertaga yana urinib ko'ring.", parse_mode="HTML")
-        conn.close()
-        return
-
-    cursor.execute("SELECT user_id FROM queue WHERE user_id != ? LIMIT 1", (user_id,))
-    opponent = cursor.fetchone()
-
-    if opponent:
-        opp_id = opponent[0]
-        cursor.execute("DELETE FROM queue WHERE user_id = ?", (opp_id,))
-        cursor.execute("INSERT INTO matches (player1_id, player2_id) VALUES (?, ?)", (user_id, opp_id))
-        match_id = cursor.lastrowid
-        
-        cursor.execute("INSERT OR REPLACE INTO active_chats (user_id, opponent_id, match_id) VALUES (?, ?, ?)", (user_id, opp_id, match_id))
-        cursor.execute("INSERT OR REPLACE INTO active_chats (user_id, opponent_id, match_id) VALUES (?, ?, ?)", (opp_id, user_id, match_id))
-        conn.commit()
-        conn.close()
-
-        text = (
-            "✅ <b>Raqib topildi!</b> Endi u bilan shu chat orqali anonim yozishingiz mumkin.\n"
-            "O'yin tugagach natijani belgilang:"
-        )
-        
-        await message.answer(text, reply_markup=match_inline_keyboard(match_id), parse_mode="HTML")
-        await bot.send_message(opp_id, text, reply_markup=match_inline_keyboard(match_id), parse_mode="HTML")
-    else:
-        cursor.execute("INSERT OR REPLACE INTO queue (user_id) VALUES (?)", (user_id,))
-        conn.commit()
-        conn.close()
-        
-        search_msg = await message.answer("🔍 <b>Raqib izlanmoqda...</b>\n⏱️ (1 daqiqa ichida raqib topilmasa izlash bekor qilinadi)", parse_mode="HTML")
-        
-        await asyncio.sleep(60)
-        
-        conn2 = sqlite3.connect('tournament.db')
-        cursor2 = conn2.cursor()
-        cursor2.execute("SELECT user_id FROM queue WHERE user_id = ?", (user_id,))
-        in_queue = cursor2.fetchone()
-        
-        if in_queue:
-            cursor2.execute("DELETE FROM queue WHERE user_id = ?", (user_id,))
-            conn2.commit()
-            conn2.close()
-            try:
-                await search_msg.edit_text("⏱️ <b>1 daqiqa ichida raqib topilmadi.</b> Izlash bekor qilindi (kunlik limit kamaymadi).", parse_mode="HTML")
-            except Exception:
-                await message.answer("⏱️ <b>1 daqiqa ichida raqib topilmadi.</b> Izlash bekor qilindi (kunlik limit kamaymadi).", parse_mode="HTML")
-        else:
-            conn2.close()
-
-# --- BEKOR QILISH SO'ROVI ---
-@dp.callback_query(F.data.startswith("res_cancel_"))
-async def request_cancel_match(call: types.CallbackQuery):
-    match_id = int(call.data.split("_")[2])
-    user_id = call.from_user.id
-    
-    active = get_active_opponent(user_id)
-    if active:
-        opp_id, _ = active
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Ha", callback_data=f"confirm_cancel_{match_id}_{user_id}"),
-                InlineKeyboardButton(text="❌ Yo'q", callback_data=f"decline_cancel_{match_id}_{user_id}")
-            ]
-        ])
-        
-        await bot.send_message(
-            opp_id, 
-            "⚠️ <b>Raqibingiz o'yinni bekor qilishni so'rayapti.</b>\n\nO'yinni bekor qilishga rozimisiz?",
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
-        await call.message.answer("⏳ Raqibingizga bekor qilish so'rovi yuborildi. Javobini kuting...")
-        await call.answer()
-    else:
-        await call.answer("Faol o'yin topilmadi.", show_alert=True)
-
-@dp.callback_query(F.data.startswith("confirm_cancel_"))
-async def confirm_cancel(call: types.CallbackQuery):
-    parts = call.data.split("_")
-    match_id = int(parts[2])
-    requester_id = int(parts[3])
-    user_id = call.from_user.id
-
-    conn = sqlite3.connect('tournament.db')
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM active_chats WHERE user_id IN (?, ?)", (user_id, requester_id))
-    cursor.execute("UPDATE matches SET status = 'CANCELLED' WHERE id = ?", (match_id,))
-    conn.commit()
-    conn.close()
-
-    await call.message.edit_text("❌ O'yinni bekor qilishni tasdiqladingiz. O'yin bekor qilindi.")
-    await bot.send_message(requester_id, "❌ Raqibingiz bekor qilishga rozi bo'ldi. O'yin bekor qilindi.")
-
-@dp.callback_query(F.data.startswith("decline_cancel_"))
-async def decline_cancel(call: types.CallbackQuery):
-    parts = call.data.split("_")
-    requester_id = int(parts[3])
-
-    await call.message.edit_text("❌ Siz bekor qilish so'rovini rad etdingiz. O'yin davom etadi.")
     await bot.send_message(requester_id, "⚠️ Raqibingiz o'yinni bekor qilishni rad etdi! O'yinni davom ettiring va natijani kiriting.")
 
 # --- NATIJA TANLASH VA SKRINSHOT SO'RASH ---
@@ -846,9 +505,9 @@ async def process_screenshot(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
 
     ensure_user_exists(user_id, message.from_user.username)
-    pts = 3 if ou
+    pts = 3 if outcome == "win" else 1
 
-admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"app_{user_id}_{pts}_{match_id}"),
             InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rej_{user_id}_{pts}_{match_id}")
@@ -901,7 +560,7 @@ async def chat_relay(message: types.Message):
         elif message.voice:
             await bot.send_voice(opp_id, message.voice.file_id, caption="💬 Raqib ovozli xabar yubordi")
 
-# --- ADMIN TASDIQLASH ---
+# --- ADMIN TASDIQLASH / RAD ETISH ---
 @dp.callback_query(F.data.startswith("app_"))
 async def approve_match(call: types.CallbackQuery):
     parts = call.data.split("_")
@@ -1031,12 +690,12 @@ async def show_league(message: types.Message, state: FSMContext):
     
     await message.answer(
         "⚽ <b>2-Bosqich: Liga (Top 16)</b>\n\n"
-        "Jadval va 8 kunlik turlar matchlarini Mini App ko'rinishida ochish uchun pastdagi tugmani bosing:",
+        "Jadval va turlar matchlarini Mini App ko'rinishida ochish uchun pastdagi tugmani bosing:",
         reply_markup=kb,
         parse_mode="HTML"
     )
 
-# --- ADMIN COMMAND: TOP 16 NI LIGAGA O'TKAZISH ---
+# --- ADMIN BUYRUG'I: TOP 16 NI LIGAGA O'TKAZISH ---
 @dp.message(Command("start_league"))
 async def start_league_command(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -1045,7 +704,6 @@ async def start_league_command(message: types.Message):
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
     
-    # Top 16 ni olish
     cursor.execute("SELECT user_id FROM users ORDER BY points DESC LIMIT 16")
     top_users = [row[0] for row in cursor.fetchall()]
     
@@ -1054,12 +712,10 @@ async def start_league_command(message: types.Message):
         conn.close()
         return
 
-    # Ligaga o'tkazish
     cursor.execute("UPDATE users SET in_league = 0, points = 0, wins = 0, draws = 0, losses = 0")
     for u_id in top_users:
         cursor.execute("UPDATE users SET in_league = 1 WHERE user_id = ?", (u_id,))
 
-    # Turlar jadvalini yaratish (Round-robin)
     cursor.execute("DELETE FROM league_fixtures")
     round_num = 1
     for i in range(len(top_users)):
@@ -1070,7 +726,7 @@ async def start_league_command(message: types.Message):
 
     conn.commit()
     conn.close()
-    await message.answer(f"🎉 **Liga rasman boshlandi!** Top {len(top_users)} o'yinchilar Ligaga biriktirildi va Mini App yangilandi.")
+    await message.answer(f"🎉 **Liga rasman boshlandi!** Top {len(top_users)} o'yinchilar Ligaga o'tkazildi va Mini App yangilandi.")
 
 async def main():
     await start_web_server()
