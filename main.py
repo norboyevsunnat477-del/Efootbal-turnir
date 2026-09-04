@@ -2,28 +2,201 @@ import asyncio
 import sqlite3
 import os
 import html
+import json
 from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 
 BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
 ADMIN_ID = 5244022908  
 CHANNEL_USERNAME = "@efmobileuz"
+RENDER_APP_URL = "https://efootbal-turnir.onrender.com"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- RENDER UCHUN WEB SERVER ---
+# --- MINI APP HTML TAYYORLASH ---
+LEAGUE_HTML = """
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>eFootball 50k Liga</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: #0d1117; color: #c9d1d9; padding: 12px; }
+        .header { text-align: center; padding: 15px 10px; background: linear-gradient(135deg, #1f2937, #111827); border-radius: 12px; border: 1px solid #374151; margin-bottom: 15px; }
+        .header h1 { font-size: 20px; color: #f59e0b; margin-bottom: 4px; }
+        .header p { font-size: 13px; color: #9ca3af; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 15px; }
+        .tab-btn { flex: 1; padding: 10px; background: #161b22; border: 1px solid #30363d; color: #8b949e; border-radius: 8px; font-weight: bold; cursor: pointer; text-align: center; }
+        .tab-btn.active { background: #238636; color: white; border-color: #2ea043; }
+        .content-section { display: none; }
+        .content-section.active { display: block; }
+        table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; font-size: 13px; }
+        th { background: #21262d; color: #8b949e; text-align: left; padding: 10px; font-weight: 600; }
+        td { padding: 10px; border-bottom: 1px solid #21262d; }
+        tr:last-child td { border-bottom: none; }
+        .rank { font-weight: bold; width: 25px; text-align: center; }
+        .top-1 { color: #f59e0b; }
+        .top-2 { color: #d1d5db; }
+        .top-3 { color: #b45309; }
+        .points { font-weight: bold; color: #10b981; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+        .match-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px dashed #30363d; }
+        .match-row:last-child { border-bottom: none; }
+        .player { flex: 1; font-weight: 500; }
+        .score { font-weight: bold; padding: 2px 8px; background: #21262d; border-radius: 4px; color: #38bdf8; }
+        .round-title { font-size: 14px; font-weight: bold; color: #f59e0b; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏆 TOP 16 LIGA</h1>
+        <p>🎁 Mukofot jamg'armasi: <b>50 000 SO'M</b></p>
+    </div>
+
+    <div class="tabs">
+        <div class="tab-btn active" onclick="switchTab('table')">📊 Jadval</div>
+        <div class="tab-btn" onclick="switchTab('fixtures')">📅 Turlar</div>
+    </div>
+
+    <div id="table-section" class="content-section active">
+        <table>
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>O'yinchi</th>
+                    <th>O'O</th>
+                    <th>G/D/M</th>
+                    <th>Ochko</th>
+                </tr>
+            </thead>
+            <tbody id="standings-body">
+                <tr><td colspan="5" style="text-align:center;">Yuklanmoqda...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div id="fixtures-section" class="content-section">
+        <div id="fixtures-body">
+            <div style="text-align:center; padding:20px;">Yuklanmoqda...</div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
+            if(tab === 'table') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('table-section').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('fixtures-section').classList.add('active');
+            }
+        }
+
+        async function loadData() {
+            try {
+                const res = await fetch('/api/league');
+                const data = await res.json();
+                
+                // Table
+                const tbody = document.getElementById('standings-body');
+                if(!data.standings || data.standings.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Liga hali boshlanmadi. Top 16 kutilmoqda.</td></tr>';
+                } else {
+                    tbody.innerHTML = data.standings.map((p, i) => {
+                        let rankClass = i === 0 ? 'top-1' : (i === 1 ? 'top-2' : (i === 2 ? 'top-3' : ''));
+                        return `<tr>
+                            <td class="rank ${rankClass}">${i+1}</td>
+                            <td>@${p.username}</td>
+                            <td>${p.wins + p.draws + p.losses}</td>
+                            <td>${p.wins}/${p.draws}/${p.losses}</td>
+                            <td class="points">${p.points}</td>
+                        </tr>`;
+                    }).join('');
+                }
+
+                // Fixtures
+                const fixBody = document.getElementById('fixtures-body');
+                if(!data.fixtures || data.fixtures.length === 0) {
+                    fixBody.innerHTML = '<div class="card" style="text-align:center;">Turlar jadvali hali tuzilmadi.</div>';
+                } else {
+                    let html = '';
+                    for(let r = 1; r <= 16; r++) {
+                        let matches = data.fixtures.filter(m => m.round === r);
+                        if(matches.length > 0) {
+                            html += `<div class="card"><div class="round-title">⚽ ${r}-Tur</div>`;
+                            matches.forEach(m => {
+                                html += `<div class="match-row">
+                                    <span class="player">@${m.p1}</span>
+                                    <span class="score">${m.score}</span>
+                                    <span class="player" style="text-align:right;">@${m.p2}</span>
+                                </div>`;
+                            });
+                            html += '</div>';
+                        }
+                    }
+                    fixBody.innerHTML = html || '<div class="card" style="text-align:center;">Hali turlar o'yinlari yo'q.</div>';
+                }
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
+"""
+
+# --- WEB SERVER & API ENDPOINTS ---
 async def handle_health_check(request):
-    return web.Response(text="Bot ishlayapti!")
+    return web.Response(text="Bot va Mini App ishlayapti!")
+
+async def handle_league_app(request):
+    return web.Response(text=LEAGUE_HTML, content_type='text/html')
+
+async def handle_league_api(request):
+    conn = sqlite3.connect('tournament.db')
+    cursor = conn.cursor()
+    
+    # Standings
+    cursor.execute("SELECT username, points, wins, draws, losses FROM users WHERE in_league = 1 ORDER BY points DESC, wins DESC")
+    users = cursor.fetchall()
+    standings = [{"username": u[0], "points": u[1], "wins": u[2], "draws": u[3], "losses": u[4]} for u in users]
+
+    # Fixtures
+    cursor.execute("""
+        SELECT round_num, u1.username, u2.username, score_text 
+        FROM league_fixtures lf
+        LEFT JOIN users u1 ON lf.player1_id = u1.user_id
+        LEFT JOIN users u2 ON lf.player2_id = u2.user_id
+        ORDER BY round_num ASC
+    """)
+    fixtures_data = cursor.fetchall()
+    conn.close()
+
+    fixtures = [{"round": f[0], "p1": f[1] or "O'yinchi1", "p2": f[2] or "O'yinchi2", "score": f[3] or "vs"} for f in fixtures_data]
+
+    return web.json_response({"standings": standings, "fixtures": fixtures})
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle_health_check)
+    app.router.add_get('/liga', handle_league_app)
+    app.router.add_get('/api/league', handle_league_api)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", 8080))
@@ -47,16 +220,6 @@ def init_db():
             losses INTEGER DEFAULT 0
         )
     ''')
-    
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'wins' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN wins INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE users ADD COLUMN draws INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE users ADD COLUMN losses INTEGER DEFAULT 0")
-    if 'last_play_date' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN last_play_date TEXT DEFAULT ''")
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS queue (
             user_id INTEGER PRIMARY KEY
@@ -78,12 +241,21 @@ def init_db():
             status TEXT DEFAULT 'PENDING'
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS league_fixtures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_num INTEGER,
+            player1_id INTEGER,
+            player2_id INTEGER,
+            score_text TEXT DEFAULT 'vs',
+            status TEXT DEFAULT 'PENDING'
+        )
+    ''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- FOYDALANUVCHINI BAZAGA AVTOMATIK QO'SHISH ---
 def ensure_user_exists(user_id: int, username: str):
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
@@ -299,7 +471,7 @@ async def request_screenshot(call: types.CallbackQuery, state: FSMContext):
     await call.message.answer(text, parse_mode="HTML")
     await call.answer()
 
-# --- SKRINSHOTNI ODDIY FOYDALANUVCHILARDAN ADMINGA YUBORISH ---
+# --- SKRINSHOTNI ADMINGA YUBORISH ---
 @dp.message(SubmitResult.waiting_for_photo, F.photo)
 async def process_screenshot(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -309,9 +481,9 @@ async def process_screenshot(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
 
     ensure_user_exists(user_id, message.from_user.username)
-    pts = 3 if outcome == "win" else 1
+    pts = 3 if ou
 
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"app_{user_id}_{pts}_{match_id}"),
             InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rej_{user_id}_{pts}_{match_id}")
@@ -482,24 +654,58 @@ async def show_my_stats(message: types.Message, state: FSMContext):
 
     await message.answer(profile_text, parse_mode="HTML")
 
-# --- LIGA ---
+# --- LIGA MINI APP TUGMASI ---
 @dp.message(F.text == "⚽ Liga (Top 16)")
 async def show_league(message: types.Message, state: FSMContext):
     await state.clear()
+    
+    app_url = f"{RENDER_APP_URL}/liga"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 LIGA MINI APP'INI OCHISH", web_app=WebAppInfo(url=app_url))]
+    ])
+    
+    await message.answer(
+        "⚽ <b>2-Bosqich: Liga (Top 16)</b>\n\n"
+        "Jadval va 8 kunlik turlar matchlarini Mini App ko'rinishida ochish uchun pastdagi tugmani bosing:",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+# --- ADMIN COMMAND: TOP 16 NI LIGAGA O'TKAZISH ---
+@dp.message(Command("start_league"))
+async def start_league_command(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+        
     conn = sqlite3.connect('tournament.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT username, points FROM users WHERE in_league = 1 ORDER BY points DESC")
-    league_users = cursor.fetchall()
-    conn.close()
+    
+    # Top 16 ni olish
+    cursor.execute("SELECT user_id FROM users ORDER BY points DESC LIMIT 16")
+    top_users = [row[0] for row in cursor.fetchall()]
+    
+    if len(top_users) < 2:
+        await message.answer("⚠️ Ligani boshlash uchun kamida 2 ta o'yinchi kerak!")
+        conn.close()
+        return
 
-    if not league_users:
-        await message.answer("⚽ <b>2-Bosqich: Liga</b> hali boshlanmadi.\n\nSaralash bosqichining 7-kuni yakunlangach, Top 16 o'yinchi bu yerga qo'shiladi.", parse_mode="HTML")
-    else:
-        text = "🔥 <b>50 000 SO'MLIK LIGA JADVALI</b> 🔥\n\n"
-        for idx, (username, points) in enumerate(league_users, start=1):
-            safe_name = html.escape(username or "O'yinchi")
-            text += f"{idx}. @{safe_name} — {points} ochko\n"
-        await message.answer(text, parse_mode="HTML")
+    # Ligaga o'tkazish
+    cursor.execute("UPDATE users SET in_league = 0, points = 0, wins = 0, draws = 0, losses = 0")
+    for u_id in top_users:
+        cursor.execute("UPDATE users SET in_league = 1 WHERE user_id = ?", (u_id,))
+
+    # Turlar jadvalini yaratish (Round-robin)
+    cursor.execute("DELETE FROM league_fixtures")
+    round_num = 1
+    for i in range(len(top_users)):
+        for j in range(i + 1, len(top_users)):
+            cursor.execute("INSERT INTO league_fixtures (round_num, player1_id, player2_id) VALUES (?, ?, ?)",
+                           (round_num, top_users[i], top_users[j]))
+            round_num += 1
+
+    conn.commit()
+    conn.close()
+    await message.answer(f"🎉 **Liga rasman boshlandi!** Top {len(top_users)} o'yinchilar Ligaga biriktirildi va Mini App yangilandi.")
 
 async def main():
     await start_web_server()
