@@ -14,7 +14,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 # ================= SOZLAMALAR =================
 BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
 ADMIN_ID = 5244022908  
-CHANNEL_USERNAME = "@efmobileuz"
+CHANNELS = [
+    "@efuzpage",
+    "@efpageshop"
+]
 RENDER_APP_URL = "https://efootbal-turnir.onrender.com"
 # ===============================================
 
@@ -307,13 +310,16 @@ def get_active_opponent(user_id):
     return res
 
 async def check_sub(user_id: int) -> bool:
-    if not CHANNEL_USERNAME or CHANNEL_USERNAME == "@kanalingiz_username":
-        return True
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status in ['creator', 'administrator', 'member']
-    except Exception:
-        return False
+    for channel in CHANNELS:
+        if not channel or channel.startswith("@kanalingiz"):
+            continue
+        try:
+            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if member.status not in ['creator', 'administrator', 'member']:
+                return False
+        except Exception:
+            return False
+    return True
 
 # --- START HANDLER ---
 @dp.message(CommandStart())
