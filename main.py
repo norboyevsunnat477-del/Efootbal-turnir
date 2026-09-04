@@ -12,9 +12,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 
 # ================= SOZLAMALAR =================
-BOT_TOKEN = "BOT_TOKENINI_SHUYERGA_YOZING"
-ADMIN_ID = 123456789  
-CHANNEL_USERNAME = "@kanalingiz_username"
+BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
+ADMIN_ID = 5244022908  
+CHANNEL_USERNAME = "@efmobileuz"
 RENDER_APP_URL = "https://efootbal-turnir.onrender.com"
 # ===============================================
 
