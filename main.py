@@ -5,7 +5,7 @@ import html
 import json
 from datetime import datetime
 from aiohttp import web
-from aiogram import Bot, Dispatcher, F, types
+from aiogram import Bot, Dispatcher, F, types, BaseMiddleware
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,43 +14,18 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 # ================= SOZLAMALAR =================
 BOT_TOKEN = "8802613886:AAF9SvRntPSB8b1GXaNrWFy1zGJiBa7_NP8"
 ADMIN_ID = 5244022908  
+
+# 2 ta yoki undan ko'p kanallaringiz username'larini yozing:
 CHANNELS = [
     "@efuzpage",
     "@efpageshop"
 ]
+
 RENDER_APP_URL = "https://efootbal-turnir.onrender.com"
 # ===============================================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-from aiogram import BaseMiddleware
-
-class SubscriptionMiddleware(BaseMiddleware):
-    async def __call__(self, handler, event, data):
-        user = data.get("event_from_user")
-        if user:
-            # Agar foydalanuvchi 'Tekshirish' tugmasini bosgan bo'lsa, o'tkazib yuboriladi
-            if isinstance(event, types.CallbackQuery) and event.data == "check_sub":
-                return await handler(event, data)
-            
-            # Obuna tekshiruvidan o'tmagan bo'lsa bloklanadi
-            if not await check_sub(user.id):
-                if isinstance(event, types.Message):
-                    await event.answer(
-                        "⚠️ **Botdan foydalanish uchun quyidagi kanallarga a'zo bo'ling!**\n\n"
-                        "Kanalni tark etgan bo'lsangiz, qayta obuna bo'lmaguningizcha tugmalar ishlamaydi.",
-                        reply_markup=get_sub_keyboard(),
-                        parse_mode="Markdown"
-                    )
-                elif isinstance(event, types.CallbackQuery):
-                    await event.answer("⛔ Avval barcha kanallarga a'zo bo'ling!", show_alert=True)
-                return
-        return await handler(event, data)
-
-# Middleware'ni botga ulash
-dp.message.outer_middleware(SubscriptionMiddleware())
-dp.callback_query.outer_middleware(SubscriptionMiddleware())
 
 # --- MINI APP HTML INTERFEYSI ---
 LEAGUE_HTML = """
@@ -179,7 +154,7 @@ LEAGUE_HTML = """
                             html += '</div>';
                         }
                     }
-                    fixBody.innerHTML = html || '<div class="card" style="text-align:center;">Hali turlar o`yinlari yo`q.</div>';
+                    fixBody.innerHTML = html || `<div class="card" style="text-align:center;">Hali turlar o'yinlari yo'q.</div>`;
                 }
             } catch(e) {
                 console.error(e);
@@ -337,17 +312,55 @@ def get_active_opponent(user_id):
     conn.close()
     return res
 
-async def check_sub(user_id: int) -> bool:
+# --- KO'P KANALLI OBUNANI TEKSHIRISH ---
+async def get_unsubscribed_channels(user_id: int):
+    unsubscribed = []
     for channel in CHANNELS:
         if not channel or channel.startswith("@kanalingiz"):
             continue
         try:
             member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
             if member.status not in ['creator', 'administrator', 'member']:
-                return False
+                unsubscribed.append(channel)
         except Exception:
-            return False
-    return True
+            unsubscribed.append(channel)
+    return unsubscribed
+
+def get_missing_sub_keyboard(unsubscribed_channels):
+    buttons = []
+    for channel in unsubscribed_channels:
+        clean_ch = channel.replace('@', '')
+        buttons.append([InlineKeyboardButton(text=f"📢 {channel} (Kanalga o'tish)", url=f"https://t.me/{clean_ch}")])
+    buttons.append([InlineKeyboardButton(text="🔄 Qayta tekshirish", callback_data="check_sub")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# --- AVTOMATIK MIDDLEWARE (HAR BIR TUGMADA OBUNA TEKSHIRISH) ---
+class SubscriptionMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if user:
+            if isinstance(event, types.CallbackQuery) and event.data == "check_sub":
+                return await handler(event, data)
+            
+            unsubscribed = await get_unsubscribed_channels(user.id)
+            if unsubscribed:
+                kb = get_missing_sub_keyboard(unsubscribed)
+                warning_text = (
+                    "⚠️ <b>Diqqat!</b> Siz homiy kanalni tark etganingiz sababli "
+                    "ishtirokchilar ro'yxatidan va botdagi balllaringiz avtomatik o'chirilishi mumkin!\n\n"
+                    "👉 <b>Qayta a'zo bo'lish uchun pastdagi kanalga bosing:</b>"
+                )
+                
+                if isinstance(event, types.Message):
+                    await event.answer(warning_text, reply_markup=kb, parse_mode="HTML")
+                elif isinstance(event, types.CallbackQuery):
+                    await event.message.answer(warning_text, reply_markup=kb, parse_mode="HTML")
+                    await event.answer("⛔ Homiy kanalga a'zo bo'ling!", show_alert=True)
+                return
+        return await handler(event, data)
+
+dp.message.outer_middleware(SubscriptionMiddleware())
+dp.callback_query.outer_middleware(SubscriptionMiddleware())
 
 # --- START HANDLER ---
 @dp.message(CommandStart())
@@ -355,14 +368,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     ensure_user_exists(message.from_user.id, message.from_user.username)
     
-    if not await check_sub(message.from_user.id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")],
-            [InlineKeyboardButton(text="🔄 Tekshirish", callback_data="check_sub")]
-        ])
-        await message.answer("⚠️ Botdan foydalanish uchun kanalimizga a'zo bo'ling:", reply_markup=kb)
-        return
-
     await message.answer(
         "⚡ <b>eFootball Turnir Botiga xush kelibsiz!</b>\n\n"
         "1-bosqich (Saralash) ketyapti. Kuniga 5 tagacha raqib topib o'ynashingiz mumkin.",
@@ -372,12 +377,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(call: types.CallbackQuery, state: FSMContext):
-    if await check_sub(call.from_user.id):
+    unsubscribed = await get_unsubscribed_channels(call.from_user.id)
+    if not unsubscribed:
         await call.message.delete()
         ensure_user_exists(call.from_user.id, call.from_user.username)
-        await call.message.answer("✅ Rahmat! Obuna tasdiqlandi. /start tugmasini bosing.", reply_markup=main_keyboard())
+        await call.message.answer("✅ Rahmat! Barcha kanallarga obuna tasdiqlandi. /start tugmasini bosing.", reply_markup=main_keyboard())
     else:
-        await call.answer("❌ Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True)
+        await call.answer("❌ Siz hali barcha kanallarga a'zo bo'lmadingiz!", show_alert=True)
 
 # --- RAQIB TOPISH ---
 @dp.message(F.text == "🎮 Raqib topish")
@@ -572,7 +578,7 @@ async def process_screenshot(message: types.Message, state: FSMContext):
 
         await bot.send_message(opp_id, "📸 Raqibingiz natija skrinshotini yubordi. Chat yopildi, admin tekshiruvi kutilmoqda.")
 
-    await message.answer("⏳ Skrinshot adminga yuborildi. Tekshirilgandan so'ng ochko qo'shiladi.")
+    await message.answer("⏳ Skrinshot adminga yuborildi. Tekshirilgandan so'ng ochko qo'shildi.")
     await state.clear()
 
 # --- ANONIM CHAT ---
