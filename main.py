@@ -869,6 +869,51 @@ async def cmd_addpoints(message: types.Message):
         await bot.send_message(uid, f"🎉 Admin tomonidan hisobingizga <b>+{pts_to_add} ochko</b> qo'shildi!", parse_mode="HTML")
     except Exception:
         pass
+        
+# --- ADMIN USERNAME YOKI ID ORQALI OCHKO AYIRISH ---
+@dp.message(Command("removepoints"))
+async def cmd_removepoints(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+        
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Foydalanish: `/removepoints @username 10` yoki `/removepoints ID 10`", parse_mode="Markdown")
+        return
+    
+    target = args[1].replace("@", "").strip()
+    try:
+        pts_to_sub = int(args[2])
+    except ValueError:
+        await message.answer("❌ Ochko raqam bo'lishi kerak!")
+        return
+
+    conn = sqlite3.connect('tournament.db')
+    cursor = conn.cursor()
+    
+    if target.isdigit():
+        cursor.execute("SELECT user_id, username FROM users WHERE user_id = ?", (int(target),))
+    else:
+        cursor.execute("SELECT user_id, username FROM users WHERE LOWER(username) = LOWER(?)", (target,))
+        
+    row = cursor.fetchone()
+
+    if not row:
+        await message.answer(f"❌ Bazada '{args[1]}' topilmadi!")
+        conn.close()
+        return
+
+    uid, uname = row[0], row[1]
+    # MAX(0, points - ?) orqali ochko 0 dan pastga tushib ketmaydi
+    cursor.execute("UPDATE users SET points = MAX(0, points - ?) WHERE user_id = ?", (pts_to_sub, uid))
+    conn.commit()
+    conn.close()
+
+    await message.answer(f"✅ @{html.escape(uname or str(uid))} 'dan <b>-{pts_to_sub} ochko</b> ayirib tashlandi!", parse_mode="HTML")
+    try:
+        await bot.send_message(uid, f"⚠️ Hisobingizdan <b>-{pts_to_sub} ochko</b> olib tashlandi.", parse_mode="HTML")
+    except Exception:
+        pass
 
 # --- OMMAVIY XABAR TARQATISH (/broadcast) ---
 @dp.message(Command("broadcast"))
