@@ -713,8 +713,12 @@ async def process_screenshot(message: types.Message, state: FSMContext):
     await message.answer("⏳ Skrinshot adminga yuborildi. Tekshirilgandan so'ng ochkolar hisoblanadi.")
     await state.clear()
 
-# --- ANONIM CHAT ---
-@dp.message(StateFilter(None), ~F.text.in_(["🎮 Raqib topish", "🏆 Leaderboard", "📊 Mening natijalarim", "⚽ Liga (Top 16)", "🎁 Kunlik Sovg'a", "📜 Turnir qoidalari"]))
+# --- ANONIM CHAT (BUYRUQLARNI O'TKAZADIGAN QILIB TO'G'RILANDI) ---
+@dp.message(
+    StateFilter(None), 
+    ~F.text.startswith("/"), 
+    ~F.text.in_(["🎮 Raqib topish", "🏆 Leaderboard", "📊 Mening natijalarim", "⚽ Liga (Top 16)", "🎁 Kunlik Sovg'a", "📜 Turnir qoidalari"])
+)
 async def chat_relay(message: types.Message):
     user_id = message.from_user.id
     active = get_active_opponent(user_id)
@@ -731,7 +735,7 @@ async def chat_relay(message: types.Message):
             await bot.send_sticker(opp_id, message.sticker.file_id)
         elif message.voice:
             await bot.send_voice(opp_id, message.voice.file_id, caption="💬 Raqib ovozli xabar yubordi")
-
+            
 # --- ADMIN TASDIQLASH (MAG'LUBIYATLAR VA LIGA TURLARI TO'G'RILANGAN) ---
 @dp.callback_query(F.data.startswith("app_"))
 async def approve_match(call: types.CallbackQuery):
